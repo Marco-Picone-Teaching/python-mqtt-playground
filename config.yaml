@@ -1,0 +1,13 @@
+# Python MQTT Playground - Shared configuration
+# This file is read by the ConfigManager class (src/mqtt_playground/config/config_manager.py)
+# and contains the parameters shared by all the scripts in the process/ folder.
+
+# Target MQTT Broker
+broker:
+  # IP address or hostname of the MQTT Broker
+  # (e.g., 127.0.0.1 for a local broker or the IP of the remote broker for the authentication examples)
+  host: 127.0.0.1
+  # MQTT Broker port (1883 is the default port for plain MQTT)
+  port: 1883
+  # Keep Alive interval in seconds
+  keepalive: 60

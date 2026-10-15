@@ -1,0 +1,30 @@
+[project]
+name = "python-mqtt-playground"
+version = "0.1.0"
+description = "Python MQTT Playground - Paho MQTT producer/consumer and IoT Smart Object examples"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "paho-mqtt>=2.1,<3",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+simple-producer = "mqtt_playground.process.simple_producer:main"
+simple-consumer = "mqtt_playground.process.simple_consumer:main"
+json-producer = "mqtt_playground.process.json_producer:main"
+json-consumer = "mqtt_playground.process.json_consumer:main"
+device-producer = "mqtt_playground.process.device_producer:main"
+device-consumer = "mqtt_playground.process.device_consumer:main"
+auth-producer = "mqtt_playground.process.auth_producer:main"
+auth-consumer = "mqtt_playground.process.auth_consumer:main"
+auth-admin-consumer = "mqtt_playground.process.auth_admin_consumer:main"
+mqtt-smart-object = "mqtt_playground.process.mqtt_smart_object:main"
+mqtt-smart-object-controller = "mqtt_playground.process.mqtt_smart_object_controller:main"
+
+[build-system]
+requires = ["uv_build>=0.13.0,<0.14"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "mqtt_playground"

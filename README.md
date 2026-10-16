@@ -530,3 +530,85 @@ timer.start()
 
 print("Timer started! The greet function will run after 5 seconds with the given parameters.")
 ```
+---
+
+## MQTT Client Tools
+
+During the development and the debugging of an MQTT application it is very useful to have a **graphical MQTT client**:
+a desktop application that acts as a generic MQTT client and allows to interact with a broker without writing any code.
+With an MQTT client tool you can:
+
+- **manage the connections** to one or more brokers (host, port, client id, credentials, TLS, MQTT version, keep alive, ...);
+- **subscribe to topics**, also using the wildcards `+` and `#`, and observe in real time the messages published by the producers;
+- **inspect the messages**: payload (plain text or JSON), QoS, Retained flag and the history of the values of each topic;
+- **publish messages manually** on any topic, choosing payload, QoS and Retained flag, e.g., to test a consumer
+  or to send a command to a device without a dedicated producer.
+
+Two popular, free and cross-platform (Windows, macOS, Linux) MQTT clients are:
+
+- [MQTT Explorer](https://mqtt-explorer.com/): it shows all the topics of the broker as a **hierarchical tree**,
+  making it easy to understand the topic structure of an application. It keeps the history of the messages of each topic,
+  highlights the differences between consecutive JSON payloads and can plot numeric values on charts.
+- [MQTTX](https://mqttx.app/): developed by EMQ, it has a **chat-like interface** in which the subscriptions are listed
+  on the left and the received and published messages are shown as conversation bubbles.
+  It supports MQTT 3.1, 3.1.1 and 5.0 and is also available as a command line tool (MQTTX CLI) and as a web application.
+
+### Connection Management
+
+The first step is to create a connection to the broker, using the same parameters of `config.yaml`
+(e.g., protocol `mqtt://`, host `127.0.0.1` or a [public broker](#mqtt-broker), port `1883`).
+Username and password are required only for brokers with authentication
+(e.g., the [Authorized Producer & Consumer](#4-authorized-producer--consumer) example).
+Both tools allow to save multiple connections, so you can easily switch between a local broker and a public one.
+
+MQTT Explorer - Connection configuration:
+
+![](images/mqtt_explorer.png)
+
+MQTTX - Connection configuration (with the advanced parameters such as MQTT version, Keep Alive and Clean Start):
+
+![](images/mqttx_1.png)
+
+> **Note:** the Client ID must be unique on the broker. MQTTX generates a random Client ID for each connection,
+> so it does not conflict with the clients of the playground (e.g., `clientId0001-Consumer`).
+> If you set it manually, choose a different value, otherwise the broker disconnects one of the two clients.
+
+### Receiving Messages on Topics
+
+Once connected, the client can subscribe to the topics of interest and show the received messages.
+
+In **MQTT Explorer**, the subscription to all the topics (`#`) is automatic: the topic tree on the left is built
+as soon as new messages arrive, and selecting a topic shows on the right its last value, QoS, history and
+a panel to publish new messages:
+
+![](images/mqtt_explorer_2.png)
+
+In **MQTTX**, the subscriptions are created explicitly with the **New Subscription** button (specifying topic filter
+and QoS). Each subscription has a different color, used also for the received messages. The bottom panel allows
+to publish a message choosing payload format, QoS, Retained flag and topic:
+
+![](images/mqttx_2.png)
+
+### Using an MQTT Client with the Playground
+
+Some examples of how an MQTT client tool can be used together with the examples of the playground:
+
+- **Observe the producers**: run `uv run device-producer` and subscribe to `device/#` to see both the
+  (retained) device info on `device/<id>/info` and the telemetry on `device/<id>/sensor/temperature`.
+- **Test the consumers**: run `uv run json-consumer` and publish manually on the topic `device/temperature`
+  a JSON payload such as:
+
+  ```json
+  {"timestamp": 1700000000, "value_type": "TEMPERATURE_SENSOR", "value": 25.5}
+  ```
+
+- **Act as the Smart Object Controller**: run `uv run mqtt-smart-object` and publish on the topic
+  `device/device001/action/switch` the following payload to switch `OFF` (or `ON`) the actuator,
+  then observe the switch telemetry on `device/device001/telemetry/switch`:
+
+  ```json
+  {"action_type": "SWITCH", "action_value": "OFF"}
+  ```
+
+- **Understand the Retained flag**: connect the client after the producer has published the device info and
+  check that the last retained message is immediately delivered on subscription, while telemetry messages are not.

@@ -6,6 +6,9 @@ from mqtt_playground.model.temperature_sensor import TemperatureSensor
 from mqtt_playground.dto.message_descriptor import MessageDescriptor
 from mqtt_playground.dto.device_descriptor import DeviceDescriptor
 import paho.mqtt.client as mqtt
+from paho.mqtt.properties import Properties
+from paho.mqtt.reasoncodes import ReasonCode
+from typing import Any
 import time
 import uuid
 
@@ -18,12 +21,13 @@ message_limit = 1000
 
 # The callback for when the client receives a CONNACK response from the server.
 # With the Callback API VERSION2 the callback receives the reason_code and the (MQTT v5) properties
-def on_connect(client, userdata, flags, reason_code, properties):
+def on_connect(client: mqtt.Client, userdata: Any, flags: mqtt.ConnectFlags,
+               reason_code: ReasonCode, properties: Properties | None) -> None:
     # Print the connection result contained in the variable reason_code
     print("Connected with result code " + str(reason_code))
 
 
-def publish_device_info(mqtt_client, device_descriptor):
+def publish_device_info(mqtt_client: mqtt.Client, device_descriptor: DeviceDescriptor) -> None:
     # MQTT Paho Publish method with all the available parameters
     # mqtt_client.publish(topic, payload=None, qos=0, retain=False)
 
@@ -40,7 +44,7 @@ def publish_device_info(mqtt_client, device_descriptor):
     print(f"Device Info Published: Topic: {target_topic} Payload: {device_payload_string}")
 
 
-def main():
+def main() -> None:
 
     # Load the shared configuration (e.g., MQTT Broker host and port) from the config.yaml file
     config_manager = ConfigManager()

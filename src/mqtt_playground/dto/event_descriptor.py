@@ -4,7 +4,7 @@ import json
 class EventDescriptor:
     """ EventDescriptor class contains the event information """
 
-    def __init__(self, timestamp, event_type, event_value):
+    def __init__(self, timestamp: int, event_type: str, event_value: float) -> None:
         """
         Constructor for EventDescriptor class
         :param timestamp: Timestamp of the event
@@ -16,6 +16,6 @@ class EventDescriptor:
         self.event_type = event_type
         self.event_value = event_value
 
-    def to_json(self):
+    def to_json(self) -> str:
         """ Convert the object to a JSON string """
         return json.dumps(self, default=lambda o: o.__dict__)

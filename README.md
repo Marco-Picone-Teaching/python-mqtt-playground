@@ -134,13 +134,16 @@ The playground uses the 2.x version of the Paho library. The main differences wi
   and the MQTT v5 `properties`. The same signature is used for both MQTT v3.1.1 and v5:
 
   ```python
-  def on_connect(client, userdata, flags, reason_code, properties):
+  def on_connect(client: mqtt.Client, userdata: Any, flags: mqtt.ConnectFlags,
+                 reason_code: ReasonCode, properties: Properties | None) -> None:
       if reason_code.is_failure:
           print(f"Connection failed: {reason_code}")
   ```
 
 - Other callbacks change in the same way, e.g., `on_publish(client, userdata, mid, reason_code, properties)`.
   The `on_message(client, userdata, message)` callback is unchanged.
+- The library is fully type annotated, so the types of the callback parameters can be imported and used in the code
+  (see [Type Hints](#type-hints)).
 
 More details are available in the official [migration guide](https://eclipse.dev/paho/files/paho.mqtt.python/html/migrations.html).
 
@@ -170,6 +173,49 @@ Each module in `process/` follows the same structure:
 - the **`main()`** function that loads the configuration, creates the MQTT client, connects to the broker and starts the loop.
 
 Importing a module has no side effects: the process starts only when `main()` is called.
+
+### Type Hints
+
+The code uses Python **type hints** (Python >= 3.10 syntax, e.g., `float | str`, `Properties | None`) on DTOs, Models,
+the `ConfigManager` and the functions of the processes. They make explicit the data exchanged by each function
+(e.g., the fields of a `MessageDescriptor` or the MQTT client received by the helper functions) and allow
+IDEs and static type checkers to detect errors before running the code.
+
+The Paho callbacks use the types provided by the library:
+
+| Parameter     | Type                 | Description                                                                 |
+|---------------|----------------------|-----------------------------------------------------------------------------|
+| `client`      | `mqtt.Client`        | The MQTT client that received the event                                     |
+| `userdata`    | `Any`                | The user data set on the client (not used in the examples)                  |
+| `flags`       | `mqtt.ConnectFlags`  | The CONNACK flags (e.g., `session_present`)                                 |
+| `reason_code` | `ReasonCode`         | The result of the operation (`paho.mqtt.reasoncodes`)                       |
+| `properties`  | `Properties \| None` | The MQTT v5 properties (`paho.mqtt.properties`), `None` with MQTT v3.1.1    |
+| `message`     | `mqtt.MQTTMessage`   | The received message (`topic`, `payload`, `qos`, `retain`)                  |
+
+```python
+import paho.mqtt.client as mqtt
+from paho.mqtt.properties import Properties
+from paho.mqtt.reasoncodes import ReasonCode
+from typing import Any
+
+def on_connect(client: mqtt.Client, userdata: Any, flags: mqtt.ConnectFlags,
+               reason_code: ReasonCode, properties: Properties | None) -> None:
+    ...
+
+def on_message(client: mqtt.Client, userdata: Any, message: mqtt.MQTTMessage) -> None:
+    ...
+```
+
+Type hints are not checked at runtime by Python. To check the code with [mypy](https://mypy.readthedocs.io/) run:
+
+```bash
+uv run --with mypy mypy src/mqtt_playground --ignore-missing-imports
+```
+
+For example, the `value` of a `MessageDescriptor` is declared as `float | str` (a temperature or a switch status),
+so mypy reports an error if it is compared with a number without checking its type first. For this reason the
+Smart Object Controller checks the type with `isinstance(message_descriptor.value, (int, float))` before the comparison
+with the temperature limit.
 
 ## Running the Examples
 

@@ -4,6 +4,9 @@
 
 from mqtt_playground.config.config_manager import ConfigManager
 import paho.mqtt.client as mqtt
+from paho.mqtt.properties import Properties
+from paho.mqtt.reasoncodes import ReasonCode
+from typing import Any
 
 # Configuration variables
 client_id = "clientId0001-Consumer"
@@ -14,7 +17,8 @@ account_topic_prefix = ""
 
 # The callback for when the client receives a CONNACK response from the server.
 # With the Callback API VERSION2 the callback receives the reason_code and the (MQTT v5) properties
-def on_connect(client, userdata, flags, reason_code, properties):
+def on_connect(client: mqtt.Client, userdata: Any, flags: mqtt.ConnectFlags,
+               reason_code: ReasonCode, properties: Properties | None) -> None:
     print("Connected with result code " + str(reason_code))
     target_topic = account_topic_prefix + "#"
     client.subscribe(target_topic)
@@ -22,7 +26,7 @@ def on_connect(client, userdata, flags, reason_code, properties):
 
 
 # Define a callback method to receive asynchronous messages
-def on_message(client, userdata, message):
+def on_message(client: mqtt.Client, userdata: Any, message: mqtt.MQTTMessage) -> None:
     print("\n##########################################################")
     print("message received: ", str(message.payload.decode("utf-8")))
     print("message topic=", message.topic)
@@ -31,7 +35,7 @@ def on_message(client, userdata, message):
     print("##########################################################")
 
 
-def main():
+def main() -> None:
 
     # Load the shared configuration (e.g., MQTT Broker host and port) from the config.yaml file
     config_manager = ConfigManager()

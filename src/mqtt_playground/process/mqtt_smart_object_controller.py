@@ -2,6 +2,9 @@
 # Dependencies are managed with uv. From the project root run: uv run mqtt-smart-object-controller
 
 import paho.mqtt.client as mqtt
+from paho.mqtt.properties import Properties
+from paho.mqtt.reasoncodes import ReasonCode
+from typing import Any
 
 from mqtt_playground.config.config_manager import ConfigManager
 from mqtt_playground.dto.action_descriptor import ActionDescriptor
@@ -22,7 +25,8 @@ TEMPERATURE_LIMIT = 37
 
 # The callback for when the client receives a CONNACK response from the server.
 # With the Callback API VERSION2 the callback receives the reason_code and the (MQTT v5) properties
-def on_connect(client, userdata, flags, reason_code, properties):
+def on_connect(client: mqtt.Client, userdata: Any, flags: mqtt.ConnectFlags,
+               reason_code: ReasonCode, properties: Properties | None) -> None:
 
     # Print the connection result contained in the variable reason_code
     print("Connected with result code " + str(reason_code))
@@ -39,7 +43,7 @@ def on_connect(client, userdata, flags, reason_code, properties):
 
 
 # Define a callback method to receive asynchronous messages
-def on_message(client, userdata, message):
+def on_message(client: mqtt.Client, userdata: Any, message: mqtt.MQTTMessage) -> None:
 
     # If the message received is in the device info topic
     # We use the MQTT Paho topic_matches_sub method to match the topic with the device info topic
@@ -55,7 +59,7 @@ def on_message(client, userdata, message):
     else:
         print("Unmanaged Topic !")
 
-def handle_event_message(message):
+def handle_event_message(message: mqtt.MQTTMessage) -> None:
     """
     Handle the device event message received from the broker
     :param message: Message received from the broker
@@ -74,7 +78,7 @@ def handle_event_message(message):
         # Print the error message
         print(f"Error processing message: {e}")
 
-def handle_device_info_message(message):
+def handle_device_info_message(message: mqtt.MQTTMessage) -> None:
     """
     Handle the device info message received from the broker
     :param message: Message received from the broker
@@ -94,7 +98,7 @@ def handle_device_info_message(message):
         print(f"Error processing message: {e}")
 
 
-def handle_device_telemetry_message(mqtt_client, message):
+def handle_device_telemetry_message(mqtt_client: mqtt.Client, message: mqtt.MQTTMessage) -> None:
     """
     Handle the device telemetry message received from the broker
     :param mqtt_client: MQTT Client used to publish the switch actions
@@ -111,7 +115,10 @@ def handle_device_telemetry_message(mqtt_client, message):
         print(f"Received IoT Message: Topic: {message.topic} Timestamp: {message_descriptor.timestamp} Type: {message_descriptor.value_type} Value: {message_descriptor.value}")
 
         # Check if the telemetry value is above the temperature limit
-        if message_descriptor.value_type == "TEMPERATURE_SENSOR" and message_descriptor.value > TEMPERATURE_LIMIT:
+        # The value can be a float (temperature) or a string (switch status), so we check its type before the comparison
+        if (message_descriptor.value_type == "TEMPERATURE_SENSOR"
+                and isinstance(message_descriptor.value, (int, float))
+                and message_descriptor.value > TEMPERATURE_LIMIT):
 
             # Trigger a switch action to turn off the device
             trigger_switch_action(mqtt_client, "SWITCH", "OFF")
@@ -124,7 +131,7 @@ def handle_device_telemetry_message(mqtt_client, message):
         print(f"Error processing message: {e}")
 
 
-def trigger_switch_action(mqtt_client, switch_action, switch_value):
+def trigger_switch_action(mqtt_client: mqtt.Client, switch_action: str, switch_value: str) -> None:
     """
     Publish a switch action to the broker for a target device
     :param mqtt_client: MQTT Client used to publish the action
@@ -148,7 +155,7 @@ def trigger_switch_action(mqtt_client, switch_action, switch_value):
         print(f"Error processing message: {e}")
 
 
-def schedule_device_action(mqtt_client, delay_sec, switch_action, switch_value):
+def schedule_device_action(mqtt_client: mqtt.Client, delay_sec: float, switch_action: str, switch_value: str) -> None:
     """
     Schedule a device action to be triggered
     :param mqtt_client: MQTT Client used to publish the action
@@ -162,7 +169,7 @@ def schedule_device_action(mqtt_client, delay_sec, switch_action, switch_value):
     timer.start()
 
 
-def main():
+def main() -> None:
 
     # Load the shared configuration (e.g., MQTT Broker host and port) from the config.yaml file
     config_manager = ConfigManager()

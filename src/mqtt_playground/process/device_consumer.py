@@ -5,6 +5,9 @@ from mqtt_playground.config.config_manager import ConfigManager
 from mqtt_playground.dto.device_descriptor import DeviceDescriptor
 from mqtt_playground.dto.message_descriptor import MessageDescriptor
 import paho.mqtt.client as mqtt
+from paho.mqtt.properties import Properties
+from paho.mqtt.reasoncodes import ReasonCode
+from typing import Any
 import json
 
 # Configuration variables
@@ -15,7 +18,8 @@ data_topic = "device/+/sensor/#"
 
 # The callback for when the client receives a CONNACK response from the server.
 # With the Callback API VERSION2 the callback receives the reason_code and the (MQTT v5) properties
-def on_connect(client, userdata, flags, reason_code, properties):
+def on_connect(client: mqtt.Client, userdata: Any, flags: mqtt.ConnectFlags,
+               reason_code: ReasonCode, properties: Properties | None) -> None:
 
     # Print the connection result contained in the variable reason_code
     print("Connected with result code " + str(reason_code))
@@ -30,7 +34,7 @@ def on_connect(client, userdata, flags, reason_code, properties):
 
 
 # Define a callback method to receive asynchronous messages
-def on_message(client, userdata, message):
+def on_message(client: mqtt.Client, userdata: Any, message: mqtt.MQTTMessage) -> None:
 
     # If the message received is in the device info topic
     # We use the MQTT Paho topic_matches_sub method to match the topic with the device info topic
@@ -45,7 +49,7 @@ def on_message(client, userdata, message):
         print("Unmanaged Topic !")
 
 
-def handle_device_info_message(message):
+def handle_device_info_message(message: mqtt.MQTTMessage) -> None:
     """
     Handle the device info message received from the broker
     :param message:
@@ -70,7 +74,7 @@ def handle_device_info_message(message):
         print(f"Error processing message: {e}")
 
 
-def handle_device_telemetry_message(message):
+def handle_device_telemetry_message(message: mqtt.MQTTMessage) -> None:
     """
     Handle the device telemetry message received from the broker
     :param message:
@@ -95,7 +99,7 @@ def handle_device_telemetry_message(message):
         print(f"Error processing message: {e}")
 
 
-def main():
+def main() -> None:
 
     # Load the shared configuration (e.g., MQTT Broker host and port) from the config.yaml file
     config_manager = ConfigManager()

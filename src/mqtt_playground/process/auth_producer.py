@@ -5,6 +5,9 @@
 from mqtt_playground.config.config_manager import ConfigManager
 from mqtt_playground.model.temperature_sensor import TemperatureSensor
 import paho.mqtt.client as mqtt
+from paho.mqtt.properties import Properties
+from paho.mqtt.reasoncodes import ReasonCode
+from typing import Any
 import time
 
 # Configuration variables
@@ -18,15 +21,16 @@ account_topic_prefix = "/iot/user/<your_username>/"
 
 # The callback for when the client receives a CONNACK response from the server.
 # With the Callback API VERSION2 the callback receives the reason_code and the (MQTT v5) properties
-def on_connect(client, userdata, flags, reason_code, properties):
+def on_connect(client: mqtt.Client, userdata: Any, flags: mqtt.ConnectFlags,
+               reason_code: ReasonCode, properties: Properties | None) -> None:
     print("Connected with result code " + str(reason_code))
 
-#def on_publish(client, userdata, mid, reason_code, properties):
+#def on_publish(client: mqtt.Client, userdata: Any, mid: int, reason_code: ReasonCode, properties: Properties) -> None:
     #print("mid: " + str(mid))
     #pass
 
 
-def main():
+def main() -> None:
 
     # Load the shared configuration (e.g., MQTT Broker host and port) from the config.yaml file
     config_manager = ConfigManager()

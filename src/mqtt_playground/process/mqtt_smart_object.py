@@ -9,6 +9,9 @@ from mqtt_playground.model.temperature_sensor import TemperatureSensor
 from mqtt_playground.dto.message_descriptor import MessageDescriptor
 from mqtt_playground.dto.device_descriptor import DeviceDescriptor
 import paho.mqtt.client as mqtt
+from paho.mqtt.properties import Properties
+from paho.mqtt.reasoncodes import ReasonCode
+from typing import Any
 import time
 import threading
 import json
@@ -32,11 +35,12 @@ switch_actuator = SwitchActuator()
 device_descriptor = DeviceDescriptor(device_id, "PYTHON-ACME_CORPORATION", "0.1-beta")
 
 # Global Variable for the Device Thread
-device_thread = None
+device_thread: threading.Thread | None = None
 
 # The callback for when the client receives a CONNACK response from the server.
 # With the Callback API VERSION2 the callback receives the reason_code and the (MQTT v5) properties
-def on_connect(client, userdata, flags, reason_code, properties):
+def on_connect(client: mqtt.Client, userdata: Any, flags: mqtt.ConnectFlags,
+               reason_code: ReasonCode, properties: Properties | None) -> None:
     """Callback for when the client receives a CONNACK response from the server."""
     global device_thread
 
@@ -57,7 +61,7 @@ def on_connect(client, userdata, flags, reason_code, properties):
         print(f'Connection failed with result code {str(reason_code)}')
 
 # Define a callback method to receive asynchronous messages
-def on_message(client, userdata, message):
+def on_message(client: mqtt.Client, userdata: Any, message: mqtt.MQTTMessage) -> None:
 
     # If the message received is in the device info topic
     # We use the MQTT Paho topic_matches_sub method to match the topic with the device info topic
@@ -67,7 +71,7 @@ def on_message(client, userdata, message):
     else:
         print("Unmanaged Topic !")
 
-def handle_device_action_topic(mqtt_client, message):
+def handle_device_action_topic(mqtt_client: mqtt.Client, message: mqtt.MQTTMessage) -> None:
     """
     Handle the device action message received from the broker
     :param mqtt_client: MQTT Client used to publish the updated switch telemetry
@@ -101,7 +105,7 @@ def handle_device_action_topic(mqtt_client, message):
         # Print the error message
         print(f"Error processing message: {e}")
 
-def device_behaviour(mqtt_client):
+def device_behaviour(mqtt_client: mqtt.Client) -> None:
     """Device Behaviour: Publishes the Device Info and Telemetry Data"""
 
     # Subscribe to the action topic
@@ -117,7 +121,7 @@ def device_behaviour(mqtt_client):
     start_telemetry_publishing(mqtt_client)
 
 
-def start_telemetry_publishing(mqtt_client):
+def start_telemetry_publishing(mqtt_client: mqtt.Client) -> None:
     """Publishes the temperature sensor data to the broker"""
 
     try:
@@ -171,7 +175,7 @@ def start_telemetry_publishing(mqtt_client):
     except Exception as e:
         print(f"Error starting Telemetry Publishing: {str(e)}")
 
-def publish_switch_telemetry(mqtt_client):
+def publish_switch_telemetry(mqtt_client: mqtt.Client) -> None:
     """ Publishes the switch telemetry data to the broker """
 
     try:
@@ -196,7 +200,7 @@ def publish_switch_telemetry(mqtt_client):
     except Exception as e:
         print(f"Error publishing Switch Telemetry: {str(e)}")
 
-def publish_device_info(mqtt_client):
+def publish_device_info(mqtt_client: mqtt.Client) -> None:
     """Publishes the device descriptor to the broker"""
 
     try:
@@ -217,7 +221,7 @@ def publish_device_info(mqtt_client):
         print(f"Error publishing Device Info: {str(e)}")
 
 
-def main():
+def main() -> None:
 
     # Load the shared configuration (e.g., MQTT Broker host and port) from the config.yaml file
     config_manager = ConfigManager()

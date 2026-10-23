@@ -19,6 +19,7 @@ Reference MQTT Python Library Paho (2.x) - https://github.com/eclipse/paho.mqtt.
 - [Asynchronous Model of Paho](#asynchronous-model-of-paho)
   - [Network Loop Options](#network-loop-options)
   - [The Connection is Asynchronous](#the-connection-is-asynchronous)
+  - [connect() vs connect_async()](#connect-vs-connect_async)
   - [Connection Management Options](#connection-management-options)
   - [Why a Thread for the Logic Started by a Callback?](#why-a-thread-for-the-logic-started-by-a-callback)
 - [Project Structure](#project-structure)
@@ -203,8 +204,7 @@ The network loop has to be executed by the application in one of the following w
 
 `connect()` opens the TCP socket and sends the MQTT `CONNECT` packet, but it does **not** wait for the `CONNACK` of the broker.
 These operations are executed by the thread that calls `connect()` (e.g., the main thread), since the network loop
-has not been started yet. On the contrary, `connect_async()` only stores the connection parameters:
-the socket and the `CONNECT` packet are then managed by the network loop when it starts.
+has not been started yet (see [connect() vs connect_async()](#connect-vs-connect_async) for the alternative).
 The result of the connection is known only when the network loop receives the `CONNACK` and calls `on_connect`.
 For this reason the application logic (e.g., publishing messages) has to start only after a successful `on_connect`.
 Note that `reason_code` must always be checked in `on_connect`: the callback is called also when the connection is refused.
@@ -212,6 +212,58 @@ Note that `reason_code` must always be checked in `on_connect`: the callback is 
 > **Example with a bug:** `simple_producer_issue.py` (`uv run simple-producer-issue`) shows a producer that starts
 > publishing right after `connect()` / `loop_start()`, without waiting for `on_connect`.
 > The problem is explained in the comments of the file.
+
+### connect() vs connect_async()
+
+Paho provides two methods to connect to the broker. They differ in **which thread** opens the TCP connection
+and sends the `CONNECT` packet, and in **how network errors are reported**. In both cases the `CONNACK` is received
+by the network loop and the result is notified through `on_connect`: none of them waits for the `CONNACK`.
+
+| Aspect                                   | `connect()`                                                          | `connect_async()`                                                                  |
+|------------------------------------------|----------------------------------------------------------------------|------------------------------------------------------------------------------------|
+| What it does when called                 | Resolves the host, opens the TCP socket and sends `CONNECT`          | Only stores the connection parameters (host, port, keepalive)                      |
+| Thread that opens the socket             | The calling thread (e.g., the main thread)                           | The network loop (`loop_start()` thread or `loop_forever()`)                       |
+| Blocking                                 | Yes, until the TCP connection is established (or fails)              | No, it returns immediately                                                         |
+| Network errors (DNS, broker unreachable) | Raised immediately as an exception (e.g., `ConnectionRefusedError`) to the caller | Not raised to the caller: notified with the `on_connect_fail` callback       |
+| Broker unreachable at startup            | The application gets the exception and decides what to do            | With `loop_start()` the loop retries automatically (see `reconnect_delay_set()`); with `loop_forever()` only if `retry_first_connection=True` |
+| Waits for the `CONNACK`                  | No (result in `on_connect`)                                          | No (result in `on_connect`)                                                        |
+| Typical usage                            | Scripts and examples where the broker is expected to be reachable (all the playground processes) | Devices or applications that must start even if the broker is not reachable yet, or that must never block the calling thread (e.g., a GUI) |
+
+```mermaid
+sequenceDiagram
+    title connect() + loop_start()
+    participant M as Main Thread
+    participant L as Network Loop Thread
+    participant B as Broker
+
+    M->>B: connect(): TCP connection + CONNECT
+    Note over M: blocking until the TCP connection is open<br/>(network errors raised here as exceptions)
+    M->>L: loop_start() creates the Network Loop Thread
+    B-->>L: CONNACK (reason_code)
+    L->>L: on_connect(reason_code)
+```
+
+```mermaid
+sequenceDiagram
+    title connect_async() + loop_start()
+    participant M as Main Thread
+    participant L as Network Loop Thread
+    participant B as Broker
+
+    M->>M: connect_async(): only stores the parameters
+    Note over M: returns immediately (no network activity)
+    M->>L: loop_start() creates the Network Loop Thread
+    L->>B: TCP connection + CONNECT
+    alt broker not reachable
+        L->>L: on_connect_fail() and automatic retry
+    else broker reachable
+        B-->>L: CONNACK (reason_code)
+        L->>L: on_connect(reason_code)
+    end
+```
+
+In both cases the rule does not change: the application logic starts only after a successful `on_connect`,
+with one of the options described below.
 
 ### Connection Management Options
 

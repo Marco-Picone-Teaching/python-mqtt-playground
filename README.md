@@ -206,37 +206,12 @@ These operations are executed by the thread that calls `connect()` (e.g., the ma
 has not been started yet. On the contrary, `connect_async()` only stores the connection parameters:
 the socket and the `CONNECT` packet are then managed by the network loop when it starts.
 The result of the connection is known only when the network loop receives the `CONNACK` and calls `on_connect`.
-The following diagram shows what happens in `simple_producer_issue.py`, where the main thread starts publishing
-right after `connect()` / `loop_start()`:
-
-```mermaid
-sequenceDiagram
-    participant M as Main Thread
-    participant L as Network Loop Thread<br/>(started by loop_start)
-    participant B as Broker
-
-    M->>B: connect() opens the socket and sends CONNECT
-    Note over M: executed by the Main Thread (the network thread<br/>does not exist yet). It returns immediately<br/>without waiting for the CONNACK
-    M->>L: loop_start() creates the Network Loop Thread
-    Note over M: loop_start() returns immediately
-    M->>L: publish() only queues the message
-    Note over M,L: ISSUE: the main thread publishes without knowing<br/>if and when the client is connected
-    L->>B: PUBLISH
-    B-->>L: CONNACK (reason_code)
-    L->>L: on_connect(reason_code)
-    alt connection refused (e.g., wrong credentials)
-        B--xL: the broker closes the connection
-        Note over M,B: the QoS 0 messages are silently lost<br/>while the main thread keeps printing "Message Sent"
-    else connection accepted
-        Note over M,B: it works, but only by chance (timing dependent)
-    end
-```
-
-A producer that starts publishing right after `connect()` / `loop_start()` is therefore not sure to be connected:
-the first messages can be sent before the `CONNACK`, and if the broker refuses
-the connection (e.g., wrong credentials) the QoS 0 messages are silently lost, while the console still prints "Message Sent".
-The same is true for a retained message, such as the device info of the Device Producer.
+For this reason the application logic (e.g., publishing messages) has to start only after a successful `on_connect`.
 Note that `reason_code` must always be checked in `on_connect`: the callback is called also when the connection is refused.
+
+> **Example with a bug:** `simple_producer_issue.py` (`uv run simple-producer-issue`) shows a producer that starts
+> publishing right after `connect()` / `loop_start()`, without waiting for `on_connect`.
+> The problem is explained in the comments of the file.
 
 ### Connection Management Options
 
@@ -265,6 +240,7 @@ started by `loop_start()`, that executes `on_connect`. The `Event` is the commun
 
 ```mermaid
 sequenceDiagram
+    title Option 1 - Publish after on_connect (Event)
     participant M as Main Thread
     participant L as Network Loop Thread<br/>(started by loop_start)
     participant B as Broker
@@ -326,6 +302,7 @@ in the outgoing queue and `disconnect()` stops `loop_forever()`:
 
 ```mermaid
 sequenceDiagram
+    title Option 2 - Publish after on_connect (Thread)
     participant M as Main Thread<br/>(Network Loop with loop_forever)
     participant P as Publisher Thread
     participant B as Broker
@@ -354,6 +331,7 @@ checks if the publisher thread is still running before starting a new one:
 
 ```mermaid
 sequenceDiagram
+    title Option 2 - Automatic reconnection
     participant M as Main Thread<br/>(Network Loop with loop_forever)
     participant P as Publisher Thread
     participant B as Broker
@@ -386,6 +364,7 @@ outgoing queue: the message is actually written on the socket by the network loo
 
 ```mermaid
 sequenceDiagram
+    title WRONG - Publishing loop inside on_connect
     participant M as Main Thread<br/>(Network Loop with loop_forever)
     participant B as Broker
 

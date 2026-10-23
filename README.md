@@ -9,6 +9,34 @@ This Project contains a group of Python MQTT Paho examples focusing on the follo
 
 Reference MQTT Python Library Paho (2.x) - https://github.com/eclipse/paho.mqtt.python
 
+## Table of Contents
+
+- [Setup](#setup)
+  - [Using pip (alternative)](#using-pip-alternative)
+  - [MQTT Broker](#mqtt-broker)
+- [Configuration](#configuration)
+- [Paho MQTT 2.x](#paho-mqtt-2x)
+- [Asynchronous Model of Paho](#asynchronous-model-of-paho)
+  - [Network Loop Options](#network-loop-options)
+  - [The Connection is Asynchronous](#the-connection-is-asynchronous)
+  - [Connection Management Options](#connection-management-options)
+  - [Why a Thread for the Logic Started by a Callback?](#why-a-thread-for-the-logic-started-by-a-callback)
+- [Project Structure](#project-structure)
+  - [Type Hints](#type-hints)
+- [Running the Examples](#running-the-examples)
+- [Playground Outline](#playground-outline)
+  - [1. Simple Producer & Consumer](#1-simple-producer--consumer)
+  - [2. JSON Producer & Consumer](#2-json-producer--consumer)
+  - [3. Device Producer & Consumer](#3-device-producer--consumer)
+  - [4. Authorized Producer & Consumer](#4-authorized-producer--consumer)
+  - [5. MQTT IoT Smart Object](#5-mqtt-iot-smart-object)
+    - [Threads & Timer Information](#threads--timer-information)
+- [Code Example](#code-example)
+- [MQTT Client Tools](#mqtt-client-tools)
+  - [Connection Management](#connection-management)
+  - [Receiving Messages on Topics](#receiving-messages-on-topics)
+  - [Using an MQTT Client with the Playground](#using-an-mqtt-client-with-the-playground)
+
 ## Setup
 
 The project is managed with [uv](https://docs.astral.sh/uv/). Dependencies are declared in `pyproject.toml`,
@@ -147,6 +175,242 @@ The playground uses the 2.x version of the Paho library. The main differences wi
 
 More details are available in the official [migration guide](https://eclipse.dev/paho/files/paho.mqtt.python/html/migrations.html).
 
+## Asynchronous Model of Paho
+
+Paho is an **asynchronous** library: most of the methods of the client (`connect()`, `publish()`, `subscribe()`, ...)
+do not wait for the response of the broker, but only prepare the MQTT packets and return immediately.
+The real communication with the broker is performed by the **network loop**, that:
+
+- writes on the socket the outgoing packets queued by `publish()`, `subscribe()`, ...;
+- reads from the socket the incoming packets (CONNACK, PUBACK, incoming messages, ...);
+- sends the keepalive `PINGREQ` packets to keep the connection alive;
+- manages the automatic reconnection when the connection is lost;
+- **executes the callbacks** (`on_connect`, `on_message`, `on_publish`, ...) when the related packet is received.
+
+### Network Loop Options
+
+The network loop has to be executed by the application in one of the following ways:
+
+| Method                       | Blocking | Thread                          | Typical usage                                                         |
+|------------------------------|----------|---------------------------------|-----------------------------------------------------------------------|
+| `loop_forever()`             | Yes      | The calling thread (e.g., main) | The whole application is driven by the callbacks (e.g., consumers)    |
+| `loop_start()` / `loop_stop()` | No     | A new background thread         | The main thread has its own logic and the loop runs "behind the scenes" |
+| `loop(timeout)`              | Yes (up to `timeout`) | The calling thread     | The application integrates the loop in its own event loop             |
+
+`loop_forever()` returns only when `disconnect()` is called, while with `loop_start()` the loop runs until `loop_stop()` is called.
+
+### The Connection is Asynchronous
+
+`connect()` opens the TCP socket and sends the MQTT `CONNECT` packet, but it does **not** wait for the `CONNACK` of the broker.
+These operations are executed by the thread that calls `connect()` (e.g., the main thread), since the network loop
+has not been started yet. On the contrary, `connect_async()` only stores the connection parameters:
+the socket and the `CONNECT` packet are then managed by the network loop when it starts.
+The result of the connection is known only when the network loop receives the `CONNACK` and calls `on_connect`.
+The following diagram shows what happens in `simple_producer_issue.py`, where the main thread starts publishing
+right after `connect()` / `loop_start()`:
+
+```mermaid
+sequenceDiagram
+    participant M as Main Thread
+    participant L as Network Loop Thread<br/>(started by loop_start)
+    participant B as Broker
+
+    M->>B: connect() opens the socket and sends CONNECT
+    Note over M: executed by the Main Thread (the network thread<br/>does not exist yet). It returns immediately<br/>without waiting for the CONNACK
+    M->>L: loop_start() creates the Network Loop Thread
+    Note over M: loop_start() returns immediately
+    M->>L: publish() only queues the message
+    Note over M,L: ISSUE: the main thread publishes without knowing<br/>if and when the client is connected
+    L->>B: PUBLISH
+    B-->>L: CONNACK (reason_code)
+    L->>L: on_connect(reason_code)
+    alt connection refused (e.g., wrong credentials)
+        B--xL: the broker closes the connection
+        Note over M,B: the QoS 0 messages are silently lost<br/>while the main thread keeps printing "Message Sent"
+    else connection accepted
+        Note over M,B: it works, but only by chance (timing dependent)
+    end
+```
+
+A producer that starts publishing right after `connect()` / `loop_start()` is therefore not sure to be connected:
+the first messages can be sent before the `CONNACK`, and if the broker refuses
+the connection (e.g., wrong credentials) the QoS 0 messages are silently lost, while the console still prints "Message Sent".
+The same is true for a retained message, such as the device info of the Device Producer.
+Note that `reason_code` must always be checked in `on_connect`: the callback is called also when the connection is refused.
+
+### Connection Management Options
+
+The playground shows two correct ways to start the application logic only after a successful connection:
+
+**Option 1 - The main thread waits for the connection** (`simple_producer_event.py`).
+The `on_connect` callback sets a `threading.Event`, while the main thread blocks on `event.wait(timeout)` before publishing:
+
+```python
+connected_event = threading.Event()
+
+def on_connect(client, userdata, flags, reason_code, properties):
+    if not reason_code.is_failure:
+        connected_event.set()
+
+mqtt_client.connect(host, port, keepalive)
+mqtt_client.loop_start()
+if not connected_event.wait(connection_timeout_s):
+    print("Unable to connect ...")
+    return
+# ... publishing logic in the main thread
+```
+
+Two threads are involved: the **main thread**, that runs the publishing logic, and the **network loop thread**
+started by `loop_start()`, that executes `on_connect`. The `Event` is the communication channel between them:
+
+```mermaid
+sequenceDiagram
+    participant M as Main Thread
+    participant L as Network Loop Thread<br/>(started by loop_start)
+    participant B as Broker
+
+    M->>B: connect() sends CONNECT
+    M->>L: loop_start()
+    M->>M: connected_event.wait(timeout)
+    Note over M: suspended by the OS<br/>(no CPU usage)
+    B-->>L: CONNACK (reason_code)
+    L->>L: on_connect(reason_code)
+    alt connection accepted
+        L-->>M: connected_event.set() wakes up the main thread
+        loop message_limit times
+            M->>L: publish() queues the message
+            L->>B: PUBLISH
+            M->>M: time.sleep(1)
+        end
+        M->>L: disconnect() and loop_stop()
+    else connection refused or timeout expired
+        Note over M: wait() returns False after the timeout
+        M->>L: loop_stop() and exit
+    end
+```
+
+`Event.wait()` is **not** an active (busy) wait: the main thread is suspended by the OS without consuming CPU
+until the event is set or the timeout expires. On the contrary, a loop like `while not client.is_connected(): time.sleep(0.1)`
+is a polling solution that should be avoided.
+
+**Option 2 - The connection starts the logic** (`simple_producer.py` and all the other producers).
+The `on_connect` callback starts the publishing logic in a **dedicated thread**, while the main thread only runs `loop_forever()`:
+
+```python
+publisher_thread: threading.Thread | None = None
+
+def on_connect(client, userdata, flags, reason_code, properties):
+    if reason_code.is_failure:
+        client.disconnect()   # stop loop_forever
+        return
+    start_publishing(client)
+
+def start_publishing(client):
+    global publisher_thread
+    if publisher_thread is None or not publisher_thread.is_alive():
+        publisher_thread = threading.Thread(target=publish_messages, args=(client,), daemon=True)
+        publisher_thread.start()
+
+def publish_messages(client):
+    # ... publishing loop
+    client.disconnect()       # stop loop_forever when done
+
+mqtt_client.connect(host, port, keepalive)
+mqtt_client.loop_forever()
+```
+
+In this case the network loop runs in the **main thread** (`loop_forever()`), so `on_connect` is executed by the main thread,
+while the publishing logic runs in the **publisher thread** started by the callback.
+The publisher thread communicates with the network loop through the client methods: `publish()` puts the message
+in the outgoing queue and `disconnect()` stops `loop_forever()`:
+
+```mermaid
+sequenceDiagram
+    participant M as Main Thread<br/>(Network Loop with loop_forever)
+    participant P as Publisher Thread
+    participant B as Broker
+
+    M->>B: connect() sends CONNECT
+    M->>M: loop_forever()
+    B-->>M: CONNACK (reason_code)
+    M->>M: on_connect(reason_code)
+    alt connection refused
+        M->>M: disconnect() stops loop_forever and the process exits
+    else connection accepted
+        M->>P: start_publishing() starts the Publisher Thread
+        Note over M: on_connect returns immediately:<br/>the network loop is free to work
+        loop message_limit times
+            P->>M: publish() queues the message
+            M->>B: PUBLISH (written by the network loop)
+            P->>P: time.sleep(1)
+        end
+        Note over M,B: meanwhile the network loop also sends the<br/>PINGREQ packets and processes the incoming packets
+        P->>M: disconnect() stops loop_forever and the process exits
+    end
+```
+
+Since Paho reconnects automatically, `on_connect` can be called more than once. For this reason `start_publishing()`
+checks if the publisher thread is still running before starting a new one:
+
+```mermaid
+sequenceDiagram
+    participant M as Main Thread<br/>(Network Loop with loop_forever)
+    participant P as Publisher Thread
+    participant B as Broker
+
+    Note over P: publishing messages ...
+    B--xM: connection lost
+    M->>B: automatic reconnection: CONNECT
+    B-->>M: CONNACK (reason_code)
+    M->>M: on_connect(reason_code)
+    M->>M: start_publishing(): publisher_thread.is_alive() is True
+    Note over M,P: no new thread is started:<br/>the existing Publisher Thread keeps publishing
+```
+
+| Option                         | Pros                                                         | Cons                                                                                    |
+|--------------------------------|--------------------------------------------------------------|-----------------------------------------------------------------------------------------|
+| 1. `Event` + `loop_start()`    | Sequential code, easy to read in `main()`                    | The connection is checked only at startup: reconnections are not visible to the main thread |
+| 2. `on_connect` + thread       | Event-driven, consistent with consumers and Smart Object     | `on_connect` is called again at each reconnection: a second thread must not be started  |
+
+### Why a Thread for the Logic Started by a Callback?
+
+It could seem simpler to call the publishing loop directly inside `on_connect`. However, **the callbacks are executed by
+the network loop itself** (the main thread with `loop_forever()`, or the background thread with `loop_start()`),
+and while a callback is running the network loop is blocked. Moreover, `publish()` only puts the message in an
+outgoing queue: the message is actually written on the socket by the network loop. Running a long loop
+(e.g., 1000 messages with a `sleep(1)`) inside `on_connect` has the following effects:
+
+- the queued messages are **not sent** until the callback returns;
+- the keepalive `PINGREQ` packets are not sent, so the broker **closes the connection** after 1.5 x keepalive seconds;
+- incoming messages, QoS 1/2 acknowledgments and the other callbacks are not processed.
+
+```mermaid
+sequenceDiagram
+    participant M as Main Thread<br/>(Network Loop with loop_forever)
+    participant B as Broker
+
+    B-->>M: CONNACK (reason_code)
+    M->>M: on_connect() runs the publishing loop (WRONG)
+    Note over M: the network loop is BLOCKED<br/>until on_connect returns
+    loop message_limit times
+        M->>M: publish() only queues the message
+        M->>M: time.sleep(1)
+    end
+    Note over M,B: no PUBLISH and no PINGREQ are written on the socket
+    B--xM: after 1.5 x keepalive seconds the broker closes the connection
+```
+
+For this reason a callback must always **return quickly**:
+
+- short operations (a single `publish()`, a `subscribe()`, updating a variable) can be executed directly in the callback.
+  For example, the Device Producer publishes the retained device info inside `on_connect`, and the consumers
+  subscribe inside `on_connect` so that the subscriptions are restored at each reconnection;
+- long-running or blocking logic (periodic telemetry, `time.sleep()`, waiting for user input, ...) has to be executed
+  in a **dedicated thread** started by the callback, as done by the producers and by the MQTT Smart Object (`device_behaviour` thread).
+
+For the same reason, blocking methods such as `MQTTMessageInfo.wait_for_publish()` must never be called inside a callback:
+they wait for the network loop, that is blocked by the callback itself.
+
 ## Project Structure
 
 The project follows the `src` layout: all the code is in the `mqtt_playground` package in `src/`.
@@ -224,6 +488,8 @@ Each process is exposed as a command declared in the `[project.scripts]` section
 | Command                        | Module                                                 |
 |--------------------------------|--------------------------------------------------------|
 | `simple-producer`              | `mqtt_playground.process.simple_producer`              |
+| `simple-producer-event`        | `mqtt_playground.process.simple_producer_event`        |
+| `simple-producer-issue`        | `mqtt_playground.process.simple_producer_issue`        |
 | `simple-consumer`              | `mqtt_playground.process.simple_consumer`              |
 | `json-producer`                | `mqtt_playground.process.json_producer`                |
 | `json-consumer`                | `mqtt_playground.process.json_consumer`                |
@@ -280,9 +546,14 @@ As messages are received, the Consumer reads the numeric temperature values and 
 - **Python Files**:
   - `src/mqtt_playground/process/simple_producer.py` (`uv run simple-producer`)
   - `src/mqtt_playground/process/simple_consumer.py` (`uv run simple-consumer`)
+  - `src/mqtt_playground/process/simple_producer_event.py` (`uv run simple-producer-event`): alternative version of the producer
+    where the main thread waits for the `on_connect` callback with a `threading.Event`
+  - `src/mqtt_playground/process/simple_producer_issue.py` (`uv run simple-producer-issue`): intentionally wrong version of the producer
+    that starts publishing without waiting for the `on_connect` callback (see the comments in the file and the
+    [Asynchronous Model of Paho](#asynchronous-model-of-paho) section)
 
 - **Producer**:
-  - Connect to the MQTT Broker.
+  - Connect to the MQTT Broker and start publishing only after a successful connection (`on_connect`).
   - Publish `n` messages (e.g., 1000) with simple numeric values to `sensor/temperature` topic.
   - Message properties: `QoS = 0`, `Retained = false`.
 

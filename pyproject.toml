@@ -11,6 +11,8 @@ dependencies = [
 
 [project.scripts]
 simple-producer = "mqtt_playground.process.simple_producer:main"
+simple-producer-event = "mqtt_playground.process.simple_producer_event:main"
+simple-producer-issue = "mqtt_playground.process.simple_producer_issue:main"
 simple-consumer = "mqtt_playground.process.simple_consumer:main"
 json-producer = "mqtt_playground.process.json_producer:main"
 json-consumer = "mqtt_playground.process.json_consumer:main"

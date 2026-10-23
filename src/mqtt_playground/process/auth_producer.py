@@ -1,6 +1,13 @@
 # For this example we rely on the Paho MQTT Library for Python (2.x)
 # Dependencies are managed with uv. From the project root run: uv run auth-producer
 # The target MQTT Broker (host and port) is configured in the config.yaml file
+#
+# Connection management: the publishing logic is started by the on_connect callback in a dedicated thread,
+# only when the connection has been accepted by the broker. This is particularly important with authentication:
+# if the credentials are wrong the broker refuses the connection and no message is published.
+# The callback must return quickly since it is executed by the Paho network loop, that is also responsible for
+# sending the queued messages and the keepalive pings.
+# See simple_producer.py and the "Asynchronous Model of Paho" section of the README for a detailed explanation.
 
 from mqtt_playground.config.config_manager import ConfigManager
 from mqtt_playground.model.temperature_sensor import TemperatureSensor
@@ -8,6 +15,7 @@ import paho.mqtt.client as mqtt
 from paho.mqtt.properties import Properties
 from paho.mqtt.reasoncodes import ReasonCode
 from typing import Any
+import threading
 import time
 
 # Configuration variables
@@ -18,36 +26,45 @@ username = "<your_username>"
 password = "<your_password>"
 account_topic_prefix = "/iot/user/<your_username>/"
 
+# Thread running the publishing logic (None until the first successful connection)
+publisher_thread: threading.Thread | None = None
+
 
 # The callback for when the client receives a CONNACK response from the server.
 # With the Callback API VERSION2 the callback receives the reason_code and the (MQTT v5) properties
 def on_connect(client: mqtt.Client, userdata: Any, flags: mqtt.ConnectFlags,
                reason_code: ReasonCode, properties: Properties | None) -> None:
+    # Check if the broker has refused the connection (e.g., wrong credentials or not authorized client id)
+    if reason_code.is_failure:
+        print("Connection refused with result code " + str(reason_code))
+        # Stop the client (and the loop_forever in the main thread) since retrying with the same credentials would fail again
+        client.disconnect()
+        return
+
     print("Connected with result code " + str(reason_code))
+
+    # Start the publishing logic. The callback returns immediately, leaving the network loop free to work
+    start_publishing(client)
 
 #def on_publish(client: mqtt.Client, userdata: Any, mid: int, reason_code: ReasonCode, properties: Properties) -> None:
     #print("mid: " + str(mid))
     #pass
 
 
-def main() -> None:
+def start_publishing(mqtt_client: mqtt.Client) -> None:
+    global publisher_thread
 
-    # Load the shared configuration (e.g., MQTT Broker host and port) from the config.yaml file
-    config_manager = ConfigManager()
+    # on_connect is called again at each automatic reconnection: avoid starting a second publishing thread
+    if publisher_thread is not None and publisher_thread.is_alive():
+        print("Publishing thread already running ...")
+        return
 
-    # Create a new MQTT Client
-    mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id)
-    mqtt_client.on_connect = on_connect
+    # Start the publishing logic in a dedicated thread (daemon to not block the process exit, e.g., with CTRL+C)
+    publisher_thread = threading.Thread(target=publish_messages, args=(mqtt_client,), daemon=True)
+    publisher_thread.start()
 
-    # Set Account Username & Password
-    mqtt_client.username_pw_set(username, password)
 
-    # Connect to the target MQTT Broker
-    print("Connecting to " + config_manager.broker_host + " port: " + str(config_manager.broker_port))
-    mqtt_client.connect(config_manager.broker_host, config_manager.broker_port, config_manager.broker_keepalive)
-
-    # Start the MQTT Client with the loop_start method to process the callbacks in a separate thread
-    mqtt_client.loop_start()
+def publish_messages(mqtt_client: mqtt.Client) -> None:
 
     # Create Demo Temperature Sensor
     temperature_sensor = TemperatureSensor()
@@ -74,7 +91,30 @@ def main() -> None:
         print(f"Message Sent: {message_id} Topic: {target_topic} Payload: {payload_string}")
         time.sleep(1)
 
-    mqtt_client.loop_stop()
+    # Disconnect from the broker when all the messages have been sent: this also stops the loop_forever in main()
+    mqtt_client.disconnect()
+
+
+def main() -> None:
+
+    # Load the shared configuration (e.g., MQTT Broker host and port) from the config.yaml file
+    config_manager = ConfigManager()
+
+    # Create a new MQTT Client
+    mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id)
+    mqtt_client.on_connect = on_connect
+
+    # Set Account Username & Password
+    mqtt_client.username_pw_set(username, password)
+
+    # Connect to the target MQTT Broker
+    print("Connecting to " + config_manager.broker_host + " port: " + str(config_manager.broker_port))
+    mqtt_client.connect(config_manager.broker_host, config_manager.broker_port, config_manager.broker_keepalive)
+
+    # Run the MQTT Client network loop in the main thread with the blocking loop_forever method.
+    # The publishing logic is started by the on_connect callback, while loop_forever returns
+    # when disconnect() is called (at the end of the publishing or if the connection is refused)
+    mqtt_client.loop_forever()
 
 
 if __name__ == "__main__":
